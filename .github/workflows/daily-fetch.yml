@@ -1,0 +1,52 @@
+name: Daily Fetch
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs every day at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  fetch-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Check for MD5 change
+        id: md5_check
+        run: |
+          # 下载远程 MD5 文件用于比较
+          wget -q https://9280.kstore.vip/cat/index.js.md5 -O remote.md5
+
+          # 检查本地 MD5 文件是否存在，或者是否与远程文件不同
+          if [ ! -f index.js.md5 ] || ! cmp -s remote.md5 index.js.md5; then
+            echo "MD5 has changed or local MD5 not found. Fetching files."
+            echo "should_fetch=true" >> $GITHUB_OUTPUT
+          else
+            echo "MD5 is the same. No fetch needed."
+            echo "should_fetch=false" >> $GITHUB_OUTPUT
+          fi
+          # 清理下载的远程 MD5 文件
+          rm remote.md5
+
+      - name: Fetch files if MD5 changed
+        if: steps.md5_check.outputs.should_fetch == 'true'
+        run: |
+          wget -O index.js.md5 https://9280.kstore.vip/cat/index.js.md5
+          wget -O index.js https://9280.kstore.vip/cat/index.js
+          wget -O index.config.js https://9280.kstore.vip/cat/index.config.js
+          wget -O index.config.js.md5 https://9280.kstore.vip/cat/index.config.js.md5
+
+      - name: Commit and push if there are changes
+        if: steps.md5_check.outputs.should_fetch == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .
+          # 仅在有文件变动时才执行 commit 和 push
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "$(date +'%Y-%m-%d')"
+            git push
+          else
+            echo "No changes to commit."
+          fi
